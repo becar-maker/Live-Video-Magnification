@@ -1,0 +1,59 @@
+name: Windows Build (CUDA) & Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # Namesti CUDA Toolkit (za OpenCV CUDA)
+    - name: Install CUDA Toolkit
+      run: choco install cuda -y
+
+    # Namesti vcpkg in zgradi OpenCV (s CUDA, FFmpeg, contrib) + QtBase
+    - name: Setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgArguments: "opencv[cuda,ffmpeg,contrib] qtbase"
+        vcpkgTriplet: "x64-windows"
+
+    - name: Configure (CMake, Release)
+      run: >
+        cmake -B build -S .
+        -DCMAKE_BUILD_TYPE=Release
+        -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+        -DVCPKG_TARGET_TRIPLET=x64-windows
+        -DUSE_CUDA=ON
+
+    - name: Build
+      run: cmake --build build --config Release
+
+    # Zberemo .exe in .dll v mapo "payload"
+    - name: Collect payload
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path payload | Out-Null
+        Get-ChildItem -Path build -Recurse -Filter *.exe | Select-Object -First 1 | ForEach-Object { Copy-Item $_.FullName payload\ }
+        Get-ChildItem -Path build -Recurse -Filter *.dll | ForEach-Object { Copy-Item $_.FullName payload\ -ErrorAction SilentlyContinue }
+        $vcpkgBin = Join-Path $env:VCPKG_ROOT "installed\x64-windows\bin"
+        if (Test-Path $vcpkgBin) { Copy-Item "$vcpkgBin\*.dll" payload\ -ErrorAction SilentlyContinue }
+
+    - name: Install Inno Setup
+      run: choco install innosetup -y
+
+    - name: Build installer
+      run: iscc /dAppPayload=payload installer.iss
+
+    - name: Publish installer
+      uses: actions/upload-artifact@v4
+      with:
+        name: LiveVideoMagnification-Installer
+        path: |
+          *.exe
