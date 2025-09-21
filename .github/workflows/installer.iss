@@ -1,7 +1,8 @@
 #define MyAppName "Live Video Magnification"
 #define MyAppVersion "1.0"
 #define MyAppPublisher "Open Source (tschnz)"
-#define MyAppExeName "Live-Video-Magnification.exe"
+; Ime exe bomo našli dinamično – najprej privzeto ime
+#define MyAppExeName "LiveVideoMagnification.exe"
 
 #ifnexist "AppPayload"
   #error "AppPayload was not defined. Use ISCC.exe /dAppPayload=<path>"
