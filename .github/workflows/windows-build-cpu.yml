@@ -1,0 +1,51 @@
+name: Windows Build (CPU) & Installer
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install tools
+      run: choco install -y ninja cmake git innosetup
+
+    - name: Setup vcpkg
+      run: |
+        git clone https://github.com/microsoft/vcpkg.git
+        cd vcpkg
+        bootstrap-vcpkg.bat
+        .\vcpkg.exe install opencv[ffmpeg,contrib]:x64-windows qtbase:x64-windows
+
+    - name: Configure (CMake, Release)
+      run: >
+        cmake -B build -S .
+        -G "Ninja"
+        -DCMAKE_BUILD_TYPE=Release
+        -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}\vcpkg\scripts\buildsystems\vcpkg.cmake
+        -DVCPKG_TARGET_TRIPLET=x64-windows
+
+    - name: Build
+      run: cmake --build build --config Release
+
+    - name: Collect payload
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path payload | Out-Null
+        Get-ChildItem -Path build -Recurse -Filter *.exe | Select-Object -First 1 | ForEach-Object { Copy-Item $_.FullName payload\ }
+        Get-ChildItem -Path build -Recurse -Filter *.dll | ForEach-Object { Copy-Item $_.FullName payload\ -ErrorAction SilentlyContinue }
+        Copy-Item vcpkg\installed\x64-windows\bin\*.dll payload\ -ErrorAction SilentlyContinue
+
+    - name: Build installer
+      run: iscc /dAppPayload=payload installer.iss
+
+    - name: Upload installer
+      uses: actions/upload-artifact@v4
+      with:
+        name: LiveVideoMagnification-Installer
+        path: |
+          *.exe
