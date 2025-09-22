@@ -1,38 +1,35 @@
-#define MyAppName "Live Video Magnification"
-#define MyAppVersion "1.0"
-#define MyAppPublisher "Open Source (tschnz)"
-; Ime exe datoteke iz tvojega builda:
+#define MyAppName "LiveVideoMagnification"
 #define MyAppExeName "LiveVideoMagnification.exe"
-
-; ✅ Pravilen preprocessor: #ifndef (ne #ifnexist)
 #ifndef AppPayload
-  #error "AppPayload was not defined. Use ISCC.exe /DAppPayload=<path>."
+  #define AppPayload "payload"
 #endif
 
 [Setup]
-AppId={{1F2C2E2F-1234-5678-9ABC-DEF123456789}
 AppName={#MyAppName}
-AppVersion={#MyAppVersion}
-AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\{#MyAppName}
-DisableDirPage=yes
+AppVersion=1.0
+DefaultDirName={pf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
-DisableProgramGroupPage=yes
+AllowNoIcons=yes
+OutputDir=Output
 OutputBaseFilename=LiveVideoMagnification-Setup
 Compression=lzma
 SolidCompression=yes
-WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64
+PrivilegesRequired=admin
+UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Languages]
-Name: "en"; MessagesFile: "compiler:Default.isl"
+Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-; Vse iz payload mape (DLL + EXE)
-Source: "{#AppPayload}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
+; kopiraj vse datoteke in podmape iz payload
+Source: "{#AppPayload}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+; bližnjice v Start menu in na namizje
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 
 [Run]
+; ponudi zagon aplikacije po namestitvi
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
