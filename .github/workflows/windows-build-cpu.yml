@@ -1,4 +1,4 @@
-name: Windows Build (CPU) & Installer (cached, fixed)
+name: Windows Build (CPU) & Installer (vcpkg GHA cache)
 
 on:
   workflow_dispatch:
@@ -6,13 +6,16 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      # === ključna vrstica: vcpkg-jev lastni GitHub cache ===
+      VCPKG_BINARY_SOURCES: "clear;gha,readwrite"
+      VCPKG_DEFAULT_TRIPLET: "x64-windows"
 
     steps:
     - name: Checkout
       uses: actions/checkout@v4
 
-    # MSVC toolchain
-    - name: Setup MSVC devcmd
+    - name: Setup MSVC devcmd (VS2022, x64)
       uses: ilammy/msvc-dev-cmd@v1
       with:
         arch: x64
@@ -20,36 +23,20 @@ jobs:
     - name: Install tools
       run: choco install -y git cmake innosetup
 
-    # ---------- ROBUST CACHE ----------
-    # Enoten ključ + 'restore-keys' za delne zadetke (če se ključ ne ujema 100%).
-    - name: Restore vcpkg cache
-      id: cache-vcpkg
-      uses: actions/cache@v4
-      with:
-        path: |
-          C:\vcpkg\installed
-          C:\vcpkg\packages
-          C:\vcpkg\buildtrees
-          C:\vcpkg\downloads
-        key: vcpkg-win-x64-opencv-ffmpeg-qtbase-${{ runner.os }}-v2
-        restore-keys: |
-          vcpkg-win-x64-opencv-ffmpeg-qtbase-
-          vcpkg-win-x64-
-          vcpkg-
-
-    - name: Setup vcpkg and libs
+    # vcpkg bootstrap (enkraten), nato install; vcpkg sam uporablja GHA cache (gha,readwrite)
+    - name: Bootstrap vcpkg
       shell: pwsh
       run: |
         if (-not (Test-Path C:\vcpkg)) {
-          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+          git clone https://github.com/microsoft/vcpkg C:\vcpkg
           cd C:\vcpkg
           .\bootstrap-vcpkg.bat
         }
-        # Če je bil cache zadet, bo to zelo hitro; sicer bo prvič še gradilo.
-        C:\vcpkg\vcpkg.exe install opencv[ffmpeg]:x64-windows qtbase:x64-windows --clean-after-build
 
-    # Build z MSVC (VS 2022)
-    - name: Configure (CMake, Release, VS2022)
+    - name: Install libs via vcpkg (uses GHA binary cache)
+      run: C:\vcpkg\vcpkg.exe install opencv[ffmpeg]:x64-windows qtbase:x64-windows --clean-after-build
+
+    - name: Configure (CMake, VS2022)
       run: >
         cmake -S . -B build
         -G "Visual Studio 17 2022"
@@ -61,7 +48,6 @@ jobs:
     - name: Build
       run: cmake --build build --config Release -- /m
 
-    # Zberemo .exe + dll-je v payload
     - name: Collect payload
       shell: pwsh
       run: |
@@ -72,8 +58,8 @@ jobs:
         $exe = Get-ChildItem -Path "$ws\build\Release" -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $exe) { $exe = Get-ChildItem -Path "$ws\build" -Recurse -Filter *.exe | Select-Object -First 1 }
         if (-not $exe) { throw "No EXE produced. Check build output." }
-
         Copy-Item $exe.FullName $payload
+
         Get-ChildItem -Path "$ws\build\Release" -Filter *.dll -ErrorAction SilentlyContinue | % { Copy-Item $_.FullName $payload -ErrorAction SilentlyContinue }
         Get-ChildItem -Path "$ws\build" -Recurse -Filter *.dll -ErrorAction SilentlyContinue | % { Copy-Item $_.FullName $payload -ErrorAction SilentlyContinue }
         if (Test-Path "C:\vcpkg\installed\x64-windows\bin") { Copy-Item "C:\vcpkg\installed\x64-windows\bin\*.dll" $payload -ErrorAction SilentlyContinue }
@@ -94,5 +80,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: LiveVideoMagnification-Installer
-        path: |
-          LiveVideoMagnification-Setup.exe
+        path: LiveVideoMagnification-Setup.exe
