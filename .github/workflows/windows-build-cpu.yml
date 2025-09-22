@@ -21,6 +21,7 @@ jobs:
     - name: Install tools
       run: choco install -y git cmake innosetup
 
+    # cache za vcpkg (downloads + installed)
     - name: Restore vcpkg downloads cache
       uses: actions/cache@v4
       with:
@@ -63,6 +64,7 @@ jobs:
     - name: Build
       run: cmake --build build --config Release -- /m
 
+    # zberemo exe + dll + Qt platforms v 'payload'
     - name: Collect payload
       shell: pwsh
       run: |
@@ -76,23 +78,22 @@ jobs:
         if (-not $exe) { throw "No EXE produced. Check build output." }
         Copy-Item $exe.FullName $payload
 
-        # DLL-ji iz build
+        # DLL-ji iz build-a
         Get-ChildItem -Path "$ws\build\Release" -Filter *.dll -ErrorAction SilentlyContinue | % { Copy-Item $_.FullName $payload -ErrorAction SilentlyContinue }
         Get-ChildItem -Path "$ws\build" -Recurse -Filter *.dll -ErrorAction SilentlyContinue | % { Copy-Item $_.FullName $payload -ErrorAction SilentlyContinue }
 
         # DLL-ji iz vcpkg
-        if (Test-Path "C:\vcpkg\installed\x64-windows\bin") { Copy-Item "C:\vcpkg\installed\x64-windows\bin\*.dll" $payload -ErrorAction SilentlyContinue }
+        if (Test-Path "C:\vcpkg\installed\x64-windows\bin") {
+          Copy-Item "C:\vcpkg\installed\x64-windows\bin\*.dll" $payload -ErrorAction SilentlyContinue
+        }
 
-        # Qt platform plugin (qwindows.dll)
+        # Qt platform plugins (qwindows.dll) -> v payload\platforms
         $platformsSrc = "C:\vcpkg\installed\x64-windows\plugins\platforms"
         if (Test-Path $platformsSrc) {
           $platformsDest = Join-Path $payload "platforms"
           New-Item -ItemType Directory -Force -Path $platformsDest | Out-Null
           Copy-Item "$platformsSrc\*" $platformsDest -Recurse -ErrorAction SilentlyContinue
         }
-
-        Write-Host "Payload content:"
-        Get-ChildItem -Path $payload -Recurse | Format-Table -AutoSize
 
     - name: Build installer (Inno Setup)
       shell: cmd
