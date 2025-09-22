@@ -1,4 +1,4 @@
-name: Windows Build (CPU) & Installer (with Qt platforms - robust)
+name: Windows Build (CPU) & Installer (Qt windeployqt)
 
 on:
   workflow_dispatch:
@@ -21,7 +21,7 @@ jobs:
     - name: Install tools
       run: choco install -y git cmake innosetup
 
-    # cache za vcpkg (downloads + installed)
+    # Cache
     - name: Restore vcpkg downloads cache
       uses: actions/cache@v4
       with:
@@ -64,54 +64,49 @@ jobs:
     - name: Build
       run: cmake --build build --config Release -- /m
 
-    # --- ZBEREMO EXE + DLL + Qt 'platforms' (robustno) ---
-    - name: Collect payload
+    # -------------------------
+    # DEPLOY Qt z windeployqt
+    # -------------------------
+    - name: Deploy Qt runtimes (windeployqt)
       shell: pwsh
       run: |
         $ws = $env:GITHUB_WORKSPACE
-        $payload = Join-Path $ws "payload"
-        New-Item -ItemType Directory -Force -Path $payload | Out-Null
-
-        # EXE
         $exe = Get-ChildItem -Path "$ws\build\Release" -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $exe) { $exe = Get-ChildItem -Path "$ws\build" -Recurse -Filter *.exe | Select-Object -First 1 }
         if (-not $exe) { throw "No EXE produced. Check build output." }
-        Copy-Item $exe.FullName $payload
 
-        # DLL-ji iz build-a
-        Get-ChildItem -Path "$ws\build\Release" -Filter *.dll -ErrorAction SilentlyContinue | % { Copy-Item $_.FullName $payload -ErrorAction SilentlyContinue }
-        Get-ChildItem -Path "$ws\build" -Recurse -Filter *.dll -ErrorAction SilentlyContinue | % { Copy-Item $_.FullName $payload -ErrorAction SilentlyContinue }
-
-        # DLL-ji iz vcpkg
-        $binDir = "C:\vcpkg\installed\x64-windows\bin"
-        if (Test-Path $binDir) { Copy-Item "$binDir\*.dll" $payload -ErrorAction SilentlyContinue }
-
-        # Qt 'platforms' (qwindows.dll) - več možnih lokacij v vcpkg
+        # Kandidatne poti do windeployqt (vcpkg jih pogosto da sem)
         $candidates = @(
-          "C:\vcpkg\installed\x64-windows\plugins\platforms",
-          "C:\vcpkg\installed\x64-windows\tools\qt6\plugins\platforms",
-          "C:\vcpkg\packages\qtbase_x64-windows\plugins\platforms",
-          "C:\vcpkg\packages\qtbase_x64-windows\tools\qt6\plugins\platforms"
+          "C:\vcpkg\installed\x64-windows\tools\qt6\bin\windeployqt.exe",
+          "C:\vcpkg\packages\qtbase_x64-windows\tools\qt6\bin\windeployqt.exe"
         )
-        $platformsFound = $false
-        foreach ($dir in $candidates) {
-          if (Test-Path $dir -PathType Container) {
-            if (Test-Path (Join-Path $dir "qwindows.dll")) {
-              $dest = Join-Path $payload "platforms"
-              New-Item -ItemType Directory -Force -Path $dest | Out-Null
-              Copy-Item "$dir\*" $dest -Recurse -ErrorAction SilentlyContinue
-              Write-Host "Copied Qt platforms from: $dir"
-              $platformsFound = $true
-              break
-            }
-          }
-        }
-        if (-not $platformsFound) {
-          Write-Warning "Qt 'platforms' (qwindows.dll) not found in expected locations. Installer will build, but app may need 'platforms\\qwindows.dll'."
-        }
+        $wqt = $null
+        foreach ($c in $candidates) { if (Test-Path $c) { $wqt = $c; break } }
+        if (-not $wqt) { throw "windeployqt.exe not found in vcpkg tools." }
 
-        Write-Host "Payload content:"
+        # Ciljna mapa za 'deploy' je payload (tja bo windeployqt skopiral Qt dll + plugins)
+        $payload = Join-Path $ws "payload"
+        New-Item -ItemType Directory -Force -Path $payload | Out-Null
+
+        # Zagon windeployqt – kopira tudi 'platforms\qwindows.dll'
+        & $wqt --release --no-translations --no-quick-import --no-opengl-sw `
+               --dir "$payload" "$($exe.FullName)"
+
+        # Dodatno: skopiraj naš exe (če ga windeployqt ni prenesel) in ostale dll-je (opencv/ffmpeg)
+        Copy-Item $exe.FullName $payload -Force
+        Get-ChildItem -Path "$ws\build\Release" -Filter *.dll -ErrorAction SilentlyContinue | % { Copy-Item $_.FullName $payload -Force -ErrorAction SilentlyContinue }
+        Get-ChildItem -Path "$ws\build" -Recurse -Filter *.dll -ErrorAction SilentlyContinue | % { Copy-Item $_.FullName $payload -Force -ErrorAction SilentlyContinue }
+
+        # Tudi vcpkg binarije (ffmpeg/opencv), če jih windeployqt ne pobere
+        $binDir = "C:\vcpkg\installed\x64-windows\bin"
+        if (Test-Path $binDir) { Copy-Item "$binDir\*.dll" $payload -Force -ErrorAction SilentlyContinue }
+
+        Write-Host "Payload content (after windeployqt):"
         Get-ChildItem -Path $payload -Recurse | Format-Table -AutoSize
+
+        # Minimalni qt.conf, da Qt zagotovo najde plugine lokalno
+        $qtconf = Join-Path $payload "qt.conf"
+        Set-Content -Path $qtconf -Value "[Paths]`nPlugins=."
 
     - name: Build installer (Inno Setup)
       shell: cmd
