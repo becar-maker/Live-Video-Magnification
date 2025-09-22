@@ -7,7 +7,7 @@
 [Setup]
 AppName={#MyAppName}
 AppVersion=1.0
-DefaultDirName={pf}\{#MyAppName}
+DefaultDirName={pf}\{#MyAppName}   ; uporabnik lahko spremeni
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=Output
@@ -22,14 +22,12 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-; kopiraj vse datoteke in podmape iz payload
+; kopiraj vse datoteke in podmape (tudi platforms\qwindows.dll)
 Source: "{#AppPayload}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-; bližnjice v Start menu in na namizje
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 
 [Run]
-; ponudi zagon aplikacije po namestitvi
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
