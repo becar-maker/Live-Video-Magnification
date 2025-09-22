@@ -11,7 +11,7 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    # MSVC toolchain (ne MinGW)
+    # MSVC toolchain
     - name: Setup MSVC devcmd
       uses: ilammy/msvc-dev-cmd@v1
       with:
@@ -20,7 +20,8 @@ jobs:
     - name: Install tools
       run: choco install -y git cmake innosetup
 
-    # Cache za vcpkg (da so naslednji teki hitri)
+    # ---------- ROBUST CACHE ----------
+    # Enoten ključ + 'restore-keys' za delne zadetke (če se ključ ne ujema 100%).
     - name: Restore vcpkg cache
       id: cache-vcpkg
       uses: actions/cache@v4
@@ -30,7 +31,11 @@ jobs:
           C:\vcpkg\packages
           C:\vcpkg\buildtrees
           C:\vcpkg\downloads
-        key: vcpkg-win-x64-opencv-ffmpeg-qtbase-${{ runner.os }}-v1
+        key: vcpkg-win-x64-opencv-ffmpeg-qtbase-${{ runner.os }}-v2
+        restore-keys: |
+          vcpkg-win-x64-opencv-ffmpeg-qtbase-
+          vcpkg-win-x64-
+          vcpkg-
 
     - name: Setup vcpkg and libs
       shell: pwsh
@@ -40,9 +45,10 @@ jobs:
           cd C:\vcpkg
           .\bootstrap-vcpkg.bat
         }
+        # Če je bil cache zadet, bo to zelo hitro; sicer bo prvič še gradilo.
         C:\vcpkg\vcpkg.exe install opencv[ffmpeg]:x64-windows qtbase:x64-windows --clean-after-build
 
-    # Visual Studio 2022 (MSVC)
+    # Build z MSVC (VS 2022)
     - name: Configure (CMake, Release, VS2022)
       run: >
         cmake -S . -B build
@@ -55,7 +61,7 @@ jobs:
     - name: Build
       run: cmake --build build --config Release -- /m
 
-    # *** KLJUČNO: skopirajmo EXE in DLL v payload ***
+    # Zberemo .exe + dll-je v payload
     - name: Collect payload
       shell: pwsh
       run: |
@@ -63,34 +69,22 @@ jobs:
         $payload = Join-Path $ws "payload"
         New-Item -ItemType Directory -Force -Path $payload | Out-Null
 
-        # Najdi glavni .exe (najprej v build\Release, če ne, kjerkoli pod build\)
         $exe = Get-ChildItem -Path "$ws\build\Release" -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $exe) { $exe = Get-ChildItem -Path "$ws\build" -Recurse -Filter *.exe | Select-Object -First 1 }
         if (-not $exe) { throw "No EXE produced. Check build output." }
 
         Copy-Item $exe.FullName $payload
-
-        # Kopiraj morebitne DLL iz build\Release in build\
-        Get-ChildItem -Path "$ws\build\Release" -Filter *.dll -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName $payload -ErrorAction SilentlyContinue }
-        Get-ChildItem -Path "$ws\build" -Recurse -Filter *.dll -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName $payload -ErrorAction SilentlyContinue }
-
-        # DLL iz vcpkg (opencv, qt)
-        if (Test-Path "C:\vcpkg\installed\x64-windows\bin") {
-          Copy-Item "C:\vcpkg\installed\x64-windows\bin\*.dll" $payload -ErrorAction SilentlyContinue
-        }
+        Get-ChildItem -Path "$ws\build\Release" -Filter *.dll -ErrorAction SilentlyContinue | % { Copy-Item $_.FullName $payload -ErrorAction SilentlyContinue }
+        Get-ChildItem -Path "$ws\build" -Recurse -Filter *.dll -ErrorAction SilentlyContinue | % { Copy-Item $_.FullName $payload -ErrorAction SilentlyContinue }
+        if (Test-Path "C:\vcpkg\installed\x64-windows\bin") { Copy-Item "C:\vcpkg\installed\x64-windows\bin\*.dll" $payload -ErrorAction SilentlyContinue }
 
         Write-Host "Payload content:"
         Get-ChildItem -Path $payload | Format-Table -AutoSize
 
-    # Inno Setup z ABSOLUTNIMI potmi + listing za diagnostiko
     - name: Build installer (Inno Setup)
       shell: pwsh
       run: |
         $ws = $env:GITHUB_WORKSPACE
-        Write-Host "Workspace: $ws"
-        Write-Host "Listing payload:"
-        Get-ChildItem -Path "$ws\payload" -Force | Format-Table -AutoSize
-
         & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
           "/dAppPayload=$ws\payload" `
           "$ws\installer.iss"
