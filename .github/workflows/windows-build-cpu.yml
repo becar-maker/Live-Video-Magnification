@@ -1,4 +1,4 @@
-name: Windows Build (CPU) & Installer (vcpkg GHA cache)
+name: Windows Build (CPU) & Installer (cached, fixed)
 
 on:
   workflow_dispatch:
@@ -7,9 +7,7 @@ jobs:
   build:
     runs-on: windows-latest
     env:
-      # === ključna vrstica: vcpkg-jev lastni GitHub cache ===
-      VCPKG_BINARY_SOURCES: "clear;gha,readwrite"
-      VCPKG_DEFAULT_TRIPLET: "x64-windows"
+      VCPKG_DEFAULT_TRIPLET: x64-windows
 
     steps:
     - name: Checkout
@@ -23,8 +21,27 @@ jobs:
     - name: Install tools
       run: choco install -y git cmake innosetup
 
-    # vcpkg bootstrap (enkraten), nato install; vcpkg sam uporablja GHA cache (gha,readwrite)
-    - name: Bootstrap vcpkg
+    # ---- CACHE: vcpkg downloads (FFmpeg/Qt/OpenCV tarballs) ----
+    - name: Restore vcpkg downloads cache
+      uses: actions/cache@v4
+      with:
+        path: C:\vcpkg\downloads
+        key: vcpkg-downloads-${{ runner.os }}-v1
+
+    # ---- CACHE: vcpkg installed packages (DLL-ji/binariji) ----
+    - name: Restore vcpkg installed cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          C:\vcpkg\installed
+          C:\vcpkg\packages
+        key: vcpkg-installed-opencv-qt-${{ runner.os }}-v1
+        restore-keys: |
+          vcpkg-installed-opencv-qt-
+          vcpkg-installed-
+          vcpkg-
+
+    - name: Bootstrap vcpkg (once)
       shell: pwsh
       run: |
         if (-not (Test-Path C:\vcpkg)) {
@@ -33,7 +50,7 @@ jobs:
           .\bootstrap-vcpkg.bat
         }
 
-    - name: Install libs via vcpkg (uses GHA binary cache)
+    - name: Install libs via vcpkg
       run: C:\vcpkg\vcpkg.exe install opencv[ffmpeg]:x64-windows qtbase:x64-windows --clean-after-build
 
     - name: Configure (CMake, VS2022)
