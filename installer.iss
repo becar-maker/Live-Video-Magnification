@@ -22,12 +22,8 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-; 1) Vse iz payload (EXE + DLL + podmape, če obstajajo)
+; vzemi vse iz payload (tudi podmape)
 Source: "{#AppPayload}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-
-; 2) **Eksplicitno** dodaj Qt platform plugins iz vcpkg v {app}\platforms
-;    (ta pot obstaja na GitHub runnerju; installer jih bo zapakiral zraven)
-Source: "C:\vcpkg\installed\x64-windows\plugins\platforms\*"; DestDir: "{app}\platforms"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
