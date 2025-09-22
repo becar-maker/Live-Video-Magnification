@@ -82,12 +82,13 @@ jobs:
         Get-ChildItem -Path $payload | Format-Table -AutoSize
 
     - name: Build installer (Inno Setup)
-      shell: pwsh
+      shell: cmd
       run: |
-        $ws = $env:GITHUB_WORKSPACE
-        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
-          "/dAppPayload=$ws\payload" `
-          "$ws\installer.iss"
+        set WS=%GITHUB_WORKSPACE%
+        echo Workspace: %WS%
+        echo Listing payload:
+        dir "%WS%\payload"
+        "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppPayload="%WS%\payload" "%WS%\installer.iss"
 
     - name: Upload installer
       uses: actions/upload-artifact@v4
