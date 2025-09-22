@@ -1,11 +1,12 @@
 #define MyAppName "Live Video Magnification"
 #define MyAppVersion "1.0"
 #define MyAppPublisher "Open Source (tschnz)"
-; Ime exe bomo našli dinamično – najprej privzeto ime
+; Ime exe datoteke iz tvojega builda:
 #define MyAppExeName "LiveVideoMagnification.exe"
 
-#ifnexist "AppPayload"
-  #error "AppPayload was not defined. Use ISCC.exe /dAppPayload=<path>"
+; ✅ Pravilen preprocessor: #ifndef (ne #ifnexist)
+#ifndef AppPayload
+  #error "AppPayload was not defined. Use ISCC.exe /DAppPayload=<path>."
 #endif
 
 [Setup]
@@ -27,6 +28,7 @@ ArchitecturesInstallIn64BitMode=x64
 Name: "en"; MessagesFile: "compiler:Default.isl"
 
 [Files]
+; Vse iz payload mape (DLL + EXE)
 Source: "{#AppPayload}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 
 [Icons]
