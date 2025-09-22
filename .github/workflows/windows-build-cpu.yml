@@ -1,4 +1,4 @@
-name: Windows Build (CPU) & Installer (cached, fixed)
+name: Windows Build (CPU) & Installer (with Qt platforms)
 
 on:
   workflow_dispatch:
@@ -21,14 +21,12 @@ jobs:
     - name: Install tools
       run: choco install -y git cmake innosetup
 
-    # ---- CACHE: vcpkg downloads (FFmpeg/Qt/OpenCV tarballs) ----
     - name: Restore vcpkg downloads cache
       uses: actions/cache@v4
       with:
         path: C:\vcpkg\downloads
         key: vcpkg-downloads-${{ runner.os }}-v1
 
-    # ---- CACHE: vcpkg installed packages (DLL-ji/binariji) ----
     - name: Restore vcpkg installed cache
       uses: actions/cache@v4
       with:
@@ -72,25 +70,34 @@ jobs:
         $payload = Join-Path $ws "payload"
         New-Item -ItemType Directory -Force -Path $payload | Out-Null
 
+        # EXE
         $exe = Get-ChildItem -Path "$ws\build\Release" -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $exe) { $exe = Get-ChildItem -Path "$ws\build" -Recurse -Filter *.exe | Select-Object -First 1 }
         if (-not $exe) { throw "No EXE produced. Check build output." }
         Copy-Item $exe.FullName $payload
 
+        # DLL-ji iz build
         Get-ChildItem -Path "$ws\build\Release" -Filter *.dll -ErrorAction SilentlyContinue | % { Copy-Item $_.FullName $payload -ErrorAction SilentlyContinue }
         Get-ChildItem -Path "$ws\build" -Recurse -Filter *.dll -ErrorAction SilentlyContinue | % { Copy-Item $_.FullName $payload -ErrorAction SilentlyContinue }
+
+        # DLL-ji iz vcpkg
         if (Test-Path "C:\vcpkg\installed\x64-windows\bin") { Copy-Item "C:\vcpkg\installed\x64-windows\bin\*.dll" $payload -ErrorAction SilentlyContinue }
 
+        # Qt platform plugin (qwindows.dll)
+        $platformsSrc = "C:\vcpkg\installed\x64-windows\plugins\platforms"
+        if (Test-Path $platformsSrc) {
+          $platformsDest = Join-Path $payload "platforms"
+          New-Item -ItemType Directory -Force -Path $platformsDest | Out-Null
+          Copy-Item "$platformsSrc\*" $platformsDest -Recurse -ErrorAction SilentlyContinue
+        }
+
         Write-Host "Payload content:"
-        Get-ChildItem -Path $payload | Format-Table -AutoSize
+        Get-ChildItem -Path $payload -Recurse | Format-Table -AutoSize
 
     - name: Build installer (Inno Setup)
       shell: cmd
       run: |
         set WS=%GITHUB_WORKSPACE%
-        echo Workspace: %WS%
-        echo Listing payload:
-        dir "%WS%\payload"
         "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppPayload="%WS%\payload" "%WS%\installer.iss"
 
     - name: Upload installer
