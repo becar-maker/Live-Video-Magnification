@@ -1,7 +1,7 @@
 name: Windows Build (Qt6 + OpenCV via vcpkg)
 
 on:
-  workflow_dispatch: {}   # ročni zagon
+  workflow_dispatch: {}   # ročni zagon samo po tvojem kliku
 
 jobs:
   build:
@@ -14,13 +14,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ✅ Namesto aqt: enostavnejša namestitev Qt
+      # ✅ Enostavna in zanesljiva namestitev Qt (brez ročnega aqt)
       - name: Install Qt (MSVC 2022)
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.5.3'                 # stabilna Qt 6 (MSVC 2022)
+          version: '6.7.2'
           arch: 'win64_msvc2022_64'
           cache: true
+          # NE navajaj "modules:" -> qtbase pride privzeto
 
       - name: Install tools
         shell: pwsh
@@ -57,7 +58,6 @@ jobs:
           "EXE=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "Found $($exe.FullName)"
 
-      # windeployqt je v $Env:Qt6_DIR\bin
       - name: Deploy Qt runtimes (windeployqt)
         shell: pwsh
         run: |
@@ -78,7 +78,6 @@ jobs:
           7z a $zip *
           Pop-Location
           "ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "Packaged $zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
