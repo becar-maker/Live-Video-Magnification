@@ -1,32 +1,31 @@
 name: Windows Build (Qt6 + OpenCV via vcpkg)
 
 on:
-  workflow_dispatch: {}   # ročni zagon (nič več auto na push)
+  workflow_dispatch: {}   # ročni zagon
 
 jobs:
   build:
     runs-on: windows-latest
 
-    # Ne uporabljamo ${{ runner.temp }} tukaj.
     env:
       VCPKG_ROOT: C:\vcpkg
       VCPKG_DEFAULT_TRIPLET: x64-windows
-      QT_VERSION: 6.7.2
-      QT_DIR: C:\Qt\6.7.2\msvc2022_64
 
     steps:
       - uses: actions/checkout@v4
 
+      # ✅ Namesto aqt: enostavnejša namestitev Qt
+      - name: Install Qt (MSVC 2022)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.5.3'                 # stabilna Qt 6 (MSVC 2022)
+          arch: 'win64_msvc2022_64'
+          cache: true
+
       - name: Install tools
         shell: pwsh
         run: |
-          python -m pip install --upgrade pip aqtinstall
           choco install -y ninja 7zip
-
-      - name: Install Qt (MSVC 2022)
-        shell: pwsh
-        run: |
-          aqt install-qt windows desktop $env:QT_VERSION win64_msvc2022_64 -O C:\Qt -m qtbase qtimageformats
 
       - name: Setup vcpkg + OpenCV (with ffmpeg)
         shell: pwsh
@@ -41,7 +40,7 @@ jobs:
           cmake -S . -B build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
-            -DCMAKE_PREFIX_PATH="$env:QT_DIR"
+            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR"
 
       - name: Build
         shell: pwsh
@@ -58,10 +57,11 @@ jobs:
           "EXE=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "Found $($exe.FullName)"
 
+      # windeployqt je v $Env:Qt6_DIR\bin
       - name: Deploy Qt runtimes (windeployqt)
         shell: pwsh
         run: |
-          & "$env:QT_DIR\bin\windeployqt.exe" --release --compiler-runtime "$env:EXE"
+          & "$env:Qt6_DIR\bin\windeployqt.exe" --release --compiler-runtime "$env:EXE"
 
       - name: Copy OpenCV DLLs
         shell: pwsh
