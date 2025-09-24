@@ -46,7 +46,8 @@ jobs:
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH=/ucrt64 \
-            -DOpenCV_DIR=/ucrt64/lib/cmake/opencv4
+            -DOpenCV_DIR=/ucrt64/lib/cmake/opencv4 \
+            -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$(pwd)/build/bin
 
       - name: Build
         shell: msys2 {0}
@@ -56,17 +57,31 @@ jobs:
         id: findexe
         shell: msys2 {0}
         run: |
-          set -e
-          EXE=$(find build -type f -name "*Live*Video*Magnification*.exe" -not -path "*/CMakeFiles/*" | head -n1)
-          if [ -z "$EXE" ]; then
-            CANDS=$(find build -type f -name "*.exe" -not -path "*/CMakeFiles/*" -not -name "a.exe")
-            if [ -n "$CANDS" ]; then
-              EXE=$(for f in $CANDS; do echo $(stat -c%s "$f")" "$f"; done | sort -nr | head -n1 | awk '{print $2}')
-            fi
+          set -euo pipefail
+          shopt -s nullglob
+          candidates=()
+
+          # 1) najprej poglej v build/bin
+          if [ -d build/bin ]; then
+            while IFS= read -r -d '' f; do candidates+=("$f"); done < <(find build/bin -maxdepth 1 -type f -name "*.exe" -print0)
           fi
-          [ -z "$EXE" ] && { echo "No .exe produced"; exit 1; }
-          echo "EXE=$EXE" >> $GITHUB_ENV
-          echo "Found EXE: $EXE"
+          # 2) sicer preišči build/, izloči CMakeFiles in a.exe
+          if [ ${#candidates[@]} -eq 0 ]; then
+            while IFS= read -r -d '' f; do candidates+=("$f"); done < <(find build -type f -name "*.exe" ! -path "*/CMakeFiles/*" ! -path "*/Testing/*" ! -name "a.exe" -print0)
+          fi
+          if [ ${#candidates[@]} -eq 0 ]; then
+            echo "No .exe produced"; exit 1
+          fi
+
+          # vzemi največji .exe (običajno je pravi)
+          max=0; exe=""
+          for f in "${candidates[@]}"; do
+            size=$(stat -c%s "$f")
+            if (( size > max )); then max=$size; exe="$f"; fi
+          done
+
+          echo "EXE=$exe" >> $GITHUB_ENV
+          echo "Found EXE: $exe"
 
       - name: Bundle Qt runtimes (windeployqt)
         shell: msys2 {0}
@@ -85,7 +100,7 @@ jobs:
           cp /ucrt64/bin/avutil-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/swscale-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/swresample-*.dll "$BIN_DIR"/ || true
-          # dodatne odvisnosti
+          # extra odvisnosti
           cp /ucrt64/bin/libtbb*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/zlib1.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libfreetype-6.dll "$BIN_DIR"/ || true
