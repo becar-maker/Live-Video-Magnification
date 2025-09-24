@@ -1,4 +1,4 @@
-name: Windows Build (Qt6 + prebuilt OpenCV)
+name: Windows Build (MSYS2 MinGW, Qt6 + OpenCV prebuilt)
 
 on:
   workflow_dispatch: {}
@@ -10,81 +10,70 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Qt 6 z MSVC 2022; aqt pin na stabilno verzijo
-      - name: Install Qt (MSVC 2022)
-        uses: jurplel/install-qt-action@v4
+      # MSYS2 z UCRT64 (priporočeno); namestimo Qt6 + OpenCV + orodja
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
         with:
-          version: '6.6.3'             # LTS, zanesljiva
-          host: 'windows'
-          target: 'desktop'
-          arch: 'win64_msvc2022_64'
-          cache: true
-          aqtversion: '==3.2.0'        # pomembno: izogni se 3.3.0 težavi
-
-      - name: Install tools
-        shell: pwsh
-        run: choco install -y ninja 7zip
-
-      # Prenesi uradni prebuilt OpenCV 4.10 (SFX .exe) in ga razpakiraj
-      - name: Get prebuilt OpenCV 4.10
-        shell: pwsh
-        run: |
-          $ov = '4.10.0'
-          $exe = Join-Path $env:RUNNER_TEMP "opencv-$ov-windows.exe"
-          Invoke-WebRequest "https://github.com/opencv/opencv/releases/download/$ov/opencv-$ov-windows.exe" -OutFile $exe
-          7z x $exe -oC:\ -y
-          dir C:\opencv\build
+          release: true
+          update: true
+          msystem: UCRT64
+          install: >
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-tools
+            mingw-w64-ucrt-x86_64-opencv
+            zip
 
       - name: Configure (CMake + Ninja)
-        shell: pwsh
+        shell: msys2 {0}
         run: |
-          $ocvRoot = 'C:\opencv\build'
-          $binVC17 = 'C:\opencv\build\x64\vc17\bin'
-          $binVC16 = 'C:\opencv\build\x64\vc16\bin'
-          if (Test-Path $binVC17) { $env:OCV_BIN = $binVC17 } else { $env:OCV_BIN = $binVC16 }
-          cmake -S . -B build -G Ninja `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DOpenCV_DIR="$ocvRoot" `
-            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR"
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        shell: pwsh
+        shell: msys2 {0}
         run: cmake --build build --config Release --parallel
 
-      - name: Locate EXE
+      - name: Find EXE
         id: findexe
-        shell: pwsh
+        shell: bash
         run: |
-          $exe = Get-ChildItem -Path build -Recurse -Filter *.exe |
-            Where-Object { $_.Name -notmatch 'cmake|ctest' } |
-            Select-Object -First 1
-          if (-not $exe) { throw "EXE not found" }
-          "EXE=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "Found $($exe.FullName)"
+          EXE=$(ls -1 build/**/*.exe build/*.exe 2>/dev/null | head -n1)
+          if [ -z "$EXE" ]; then echo "EXE not found"; exit 1; fi
+          echo "EXE=$EXE" >> $GITHUB_ENV
+          echo "Found $EXE"
 
-      - name: Bundle Qt (windeployqt)
-        shell: pwsh
+      # Zberemo Qt/MinGW runtime (preko windeployqt v MSYS2)
+      - name: Bundle Qt runtimes
+        shell: msys2 {0}
         run: |
-          & "$env:Qt6_DIR\bin\windeployqt.exe" --release --compiler-runtime "$env:EXE"
+          EXE_WIN=$(cygpath -w "$EXE")
+          windeployqt-qt6 --release "$EXE_WIN"
 
-      - name: Copy OpenCV DLLs (prebuilt)
-        shell: pwsh
+      # Kopiramo OpenCV in MinGW DLL-je (MSYS2 paketi)
+      - name: Copy OpenCV + MinGW runtimes
+        shell: msys2 {0}
         run: |
-          $bindir = Split-Path $env:EXE
-          Copy-Item "$env:OCV_BIN\*.dll" $bindir -Force
+          BIN_DIR=$(dirname "$EXE")
+          cp /ucrt64/bin/libopencv*.dll "$BIN_DIR"/
+          # MinGW runtime (libstdc++/libgcc/winpthread) priloži windeployqt, po potrebi dodamo:
+          cp /ucrt64/bin/libstdc++-*.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libgcc_s_*.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libwinpthread-*.dll "$BIN_DIR"/ || true
 
       - name: Package ZIP
-        shell: pwsh
+        shell: msys2 {0}
         run: |
-          $bindir = Split-Path $env:EXE
-          $zip = Join-Path $env:RUNNER_TEMP "LiveVideoMagnification-win64.zip"
-          Push-Location $bindir
-          7z a $zip *
-          Pop-Location
-          "ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+          BIN_DIR=$(dirname "$EXE")
+          cd "$BIN_DIR"/..
+          ZIP="$RUNNER_TEMP/LiveVideoMagnification-msys2.zip"
+          zip -r "$ZIP" "$(basename "$BIN_DIR")"
+          echo "ZIP=$ZIP" >> $GITHUB_ENV
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LiveVideoMagnification-win64
+          name: LiveVideoMagnification-msys2
           path: ${{ env.ZIP }}
