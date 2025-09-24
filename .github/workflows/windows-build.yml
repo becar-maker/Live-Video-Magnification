@@ -32,7 +32,6 @@ jobs:
             mingw-w64-ucrt-x86_64-libpng
             mingw-w64-ucrt-x86_64-bzip2
             mingw-w64-ucrt-x86_64-zstd
-            # GLib + GStreamer za OpenCV/QtMultimedia
             mingw-w64-ucrt-x86_64-glib2
             mingw-w64-ucrt-x86_64-gstreamer
             mingw-w64-ucrt-x86_64-gst-plugins-base
@@ -61,7 +60,9 @@ jobs:
           EXE=$(find build -type f -name "*Live*Video*Magnification*.exe" -not -path "*/CMakeFiles/*" | head -n1)
           if [ -z "$EXE" ]; then
             CANDS=$(find build -type f -name "*.exe" -not -path "*/CMakeFiles/*" -not -name "a.exe")
-            [ -n "$CANDS" ] && EXE=$(for f in $CANDS; do echo $(stat -c%s "$f")" "$f; done | sort -nr | head -n1 | awk '{print $2}')
+            if [ -n "$CANDS" ]; then
+              EXE=$(for f in $CANDS; do echo $(stat -c%s "$f")" "$f"; done | sort -nr | head -n1 | awk '{print $2}')
+            fi
           fi
           [ -z "$EXE" ] && { echo "No .exe produced"; exit 1; }
           echo "EXE=$EXE" >> $GITHUB_ENV
@@ -72,13 +73,6 @@ jobs:
         run: |
           EXE_WIN=$(cygpath -w "$EXE")
           windeployqt-qt6 --release "$EXE_WIN"
-
-      # (opcijsko) lahko odstranimo Qt Multimedia vtičnike, če jih ne želiš
-      # - name: Remove Qt Multimedia plugins
-      #   shell: msys2 {0}
-      #   run: |
-      #     BIN_DIR=$(dirname "$EXE")
-      #     rm -rf "$BIN_DIR/plugins/mediaservice" || true
 
       - name: Copy OpenCV/FFmpeg + GLib/GStreamer + MinGW runtimes
         shell: msys2 {0}
@@ -91,7 +85,7 @@ jobs:
           cp /ucrt64/bin/avutil-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/swscale-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/swresample-*.dll "$BIN_DIR"/ || true
-          # dodatne odvisnosti (prej manjkajoče)
+          # dodatne odvisnosti
           cp /ucrt64/bin/libtbb*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/zlib1.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libfreetype-6.dll "$BIN_DIR"/ || true
@@ -100,7 +94,7 @@ jobs:
           cp /ucrt64/bin/libpng16-16.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libbz2-1.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libzstd*.dll "$BIN_DIR"/ || true
-          # GLib/GStreamer jedro
+          # GLib/GStreamer
           cp /ucrt64/bin/libglib-2.0-0.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libgobject-2.0-0.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libgio-2.0-0.dll "$BIN_DIR"/ || true
