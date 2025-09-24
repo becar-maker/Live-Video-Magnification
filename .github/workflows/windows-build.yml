@@ -10,7 +10,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # MSYS2 (UCRT64) + Qt6 + OpenCV + vse runtime odvisnosti, ki jih potrebujemo
       - name: Set up MSYS2
         uses: msys2/setup-msys2@v2
         with:
@@ -25,7 +24,6 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-tools
             mingw-w64-ucrt-x86_64-opencv
             mingw-w64-ucrt-x86_64-ffmpeg
-            # dodatne DLL odvisnosti:
             mingw-w64-ucrt-x86_64-tbb
             mingw-w64-ucrt-x86_64-zlib
             mingw-w64-ucrt-x86_64-freetype
@@ -72,19 +70,16 @@ jobs:
           EXE_WIN=$(cygpath -w "$EXE")
           windeployqt-qt6 --release "$EXE_WIN"
 
-      # ➜ tu dodamo še manjkajoče DLL-je (tbb, zlib, freetype, harfbuzz, …)
       - name: Copy OpenCV + MinGW runtimes
         shell: msys2 {0}
         run: |
           BIN_DIR=$(dirname "$EXE")
-          # OpenCV + FFmpeg
           cp /ucrt64/bin/libopencv*.dll "$BIN_DIR"/
           cp /ucrt64/bin/avcodec-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/avformat-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/avutil-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/swscale-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/swresample-*.dll "$BIN_DIR"/ || true
-          # Dodatne skupne odvisnosti:
           cp /ucrt64/bin/libtbb*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/zlib1.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libfreetype-6.dll "$BIN_DIR"/ || true
@@ -93,7 +88,6 @@ jobs:
           cp /ucrt64/bin/libpng16-16.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libbz2-1.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libzstd*.dll "$BIN_DIR"/ || true
-          # MinGW runtime
           cp /ucrt64/bin/libstdc++-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libgcc_s_*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libwinpthread-*.dll "$BIN_DIR"/ || true
