@@ -1,4 +1,4 @@
-name: Windows Build (MSYS2 MinGW, Qt6 + OpenCV, full bundle)
+name: Windows Build (MSYS2 MinGW, Qt6 + OpenCV, final no-GStreamer)
 
 on:
   workflow_dispatch: {}
@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up MSYS2 (UCRT64) + all deps
+      - name: Set up MSYS2 (UCRT64) + deps
         uses: msys2/setup-msys2@v2
         with:
           release: true
@@ -36,13 +36,6 @@ jobs:
             mingw-w64-ucrt-x86_64-libb2
             mingw-w64-ucrt-x86_64-graphite2
             mingw-w64-ucrt-x86_64-fribidi
-            # GLib + GStreamer (da bo delovalo tudi, če se nalagata)
-            mingw-w64-ucrt-x86_64-glib2
-            mingw-w64-ucrt-x86_64-gstreamer
-            mingw-w64-ucrt-x86_64-gst-plugins-base
-            mingw-w64-ucrt-x86_64-gst-plugins-good
-            mingw-w64-ucrt-x86_64-libiconv
-            mingw-w64-ucrt-x86_64-gettext
             mingw-w64-ucrt-x86_64-ntldd-git
             zip
 
@@ -63,8 +56,7 @@ jobs:
         id: findexe
         shell: msys2 {0}
         run: |
-          set -euo pipefail
-          shopt -s nullglob
+          set -euo pipefail; shopt -s nullglob
           candidates=()
           [ -d build/bin ] && while IFS= read -r -d '' f; do candidates+=("$f"); done < <(find build/bin -maxdepth 1 -type f -name "*.exe" -print0)
           if [ ${#candidates[@]} -eq 0 ]; then
@@ -82,56 +74,55 @@ jobs:
           EXE_WIN=$(cygpath -w "$EXE")
           windeployqt-qt6 --release "$EXE_WIN"
 
-      # Kritične DLL + “kitchen-sink” set (tbb, zlib, freetype, harfbuzz, GLib, GStreamer, …)
-      - name: Copy runtime DLLs (curated set)
+      # odstrani Qt Multimedia (ne želimo GLib/GStreamer)
+      - name: Strip Qt Multimedia
         shell: msys2 {0}
         run: |
           BIN_DIR=$(dirname "$EXE")
-          # OpenCV + FFmpeg
+          rm -rf "$BIN_DIR/plugins/mediaservice" "$BIN_DIR/plugins/multimedia" || true
+          rm -f  "$BIN_DIR"/Qt6Multimedia*.dll || true
+
+      # prisilno dodaj kritične DLL-je (+ duplicate za libtbb12.dll)
+      - name: Force-add critical DLLs
+        shell: msys2 {0}
+        run: |
+          set -e
+          BIN_DIR=$(dirname "$EXE")
+          # TBB: če obstaja samo tbb12.dll, naredi tudi libtbb12.dll
+          if [ -f /ucrt64/bin/libtbb12.dll ]; then
+            cp /ucrt64/bin/libtbb12.dll "$BIN_DIR"/
+          elif [ -f /ucrt64/bin/tbb12.dll ]; then
+            cp /ucrt64/bin/tbb12.dll "$BIN_DIR"/
+            cp -f "$BIN_DIR/tbb12.dll" "$BIN_DIR/libtbb12.dll"
+          fi
+          cp /ucrt64/bin/zlib1.dll "$BIN_DIR"/          || true
+          cp /ucrt64/bin/libfreetype-6.dll "$BIN_DIR"/  || true
+          cp /ucrt64/bin/libharfbuzz-0.dll "$BIN_DIR"/  || true
+
+      - name: Copy core DLLs (OpenCV/FFmpeg/MinGW)
+        shell: msys2 {0}
+        run: |
+          BIN_DIR=$(dirname "$EXE")
           cp /ucrt64/bin/libopencv*.dll "$BIN_DIR"/
           cp /ucrt64/bin/avcodec-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/avformat-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/avutil-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/swscale-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/swresample-*.dll "$BIN_DIR"/ || true
-          # TBB, zlib, freetype, harfbuzz, grafika/pisave
-          for n in libtbb12.dll tbb12.dll; do [ -f /ucrt64/bin/$n ] && cp /ucrt64/bin/$n "$BIN_DIR"/; done
-          cp /ucrt64/bin/zlib1.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libfreetype-6.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libharfbuzz-0.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libbrotli*.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libpng16-16.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libbz2-1.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libzstd*.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libgraphite2.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libfribidi-0.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libb2-1.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libdouble-conversion.dll "$BIN_DIR"/ || true
-          # GLib / GStreamer
-          cp /ucrt64/bin/libglib-2.0-0.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libgobject-2.0-0.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libgio-2.0-0.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libintl-8.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libiconv-2.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libpcre2-8-0.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libffi-8.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libgstreamer-1.0-0.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libgstbase-1.0-0.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libgstapp-1.0-0.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libgstaudio-1.0-0.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libgstvideo-1.0-0.dll "$BIN_DIR"/ || true
-          # MinGW runtime
           cp /ucrt64/bin/libstdc++-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libgcc_s_*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libwinpthread-*.dll "$BIN_DIR"/ || true
 
-      # Samodejni sweep: EXE + vsi DLL + vsi Qt plugin-i → kopiraj vsako odvisnost iz /ucrt64/bin
-      - name: Auto-bundle remaining deps (ntldd sweep)
+      # ntldd sweep: pobere vse odvisnosti, a filtrira GLib/GStreamer
+      - name: Auto-bundle remaining deps (ntldd, no-GLib)
         shell: msys2 {0}
         run: |
           set -euo pipefail
           BIN_DIR=$(dirname "$EXE")
-          list_deps() { ntldd -R "$1" | awk '/=>/ && $3 ~ /^\/ucrt64\/bin\// {print $3}'; }
+          list_deps() {
+            ntldd -R "$1" | awk '/=>/ && $3 ~ /^\/ucrt64\/bin\// {print $3}' |
+            grep -viE '/libg(streamer|st|object|io|glib)-|/gio-|/gmodule-|/gst'
+          }
           tmp=$(mktemp)
           find "$BIN_DIR" -maxdepth 1 -type f \( -name "*.exe" -o -name "*.dll" \) -print0 | \
             xargs -0 -I{} bash -lc 'list_deps "{}"' >> "$tmp" || true
@@ -139,16 +130,6 @@ jobs:
             xargs -0 -I{} bash -lc 'list_deps "{}"' >> "$tmp" || true
           sort -u "$tmp" | while read -r d; do cp -n "$d" "$BIN_DIR"/ || true; done
           rm -f "$tmp"
-
-      # Hitra verifikacija: ključne 4 DLL morajo obstajati
-      - name: Verify key DLLs present
-        shell: msys2 {0}
-        run: |
-          BIN_DIR=$(dirname "$EXE")
-          for f in libtbb12.dll zlib1.dll libfreetype-6.dll libharfbuzz-0.dll libglib-2.0-0.dll libgobject-2.0-0.dll libgstapp-1.0-0.dll libgstaudio-1.0-0.dll; do
-            [ -f "$BIN_DIR/$f" ] || { echo "MISSING: $f"; exit 1; }
-          done
-          echo "All key DLLs found."
 
       - name: Package ZIP
         shell: msys2 {0}
