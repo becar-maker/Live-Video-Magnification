@@ -1,49 +1,50 @@
-name: Windows Build (Qt6 + OpenCV via vcpkg)
+name: Windows Build (Qt6 + prebuilt OpenCV)
 
 on:
-  workflow_dispatch: {}   # ročni zagon
+  workflow_dispatch: {}
 
 jobs:
   build:
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        qtver: [ '6.8.1', '6.6.3' ]   # 2 poizkusa: najprej 6.8.1, fallback 6.6.3
-    env:
-      VCPKG_ROOT: C:\vcpkg
-      VCPKG_DEFAULT_TRIPLET: x64-windows
 
     steps:
       - uses: actions/checkout@v4
 
-      # ✅ Qt (akcija interno kliče aqt). Dodamo mirror, da se izognemo 404 qt_base.
-      - name: Install Qt (MSVC 2022) ${{ matrix.qtver }}
+      # Qt 6 z MSVC 2022; aqt pin na stabilno verzijo
+      - name: Install Qt (MSVC 2022)
         uses: jurplel/install-qt-action@v4
         with:
-          version: ${{ matrix.qtver }}
-          arch: win64_msvc2022_64
+          version: '6.6.3'             # LTS, zanesljiva
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2022_64'
           cache: true
-          mirror: https://download.qt.io
-          # modules: 'qtimageformats'   # po potrebi lahko odkomentiraš
+          aqtversion: '==3.2.0'        # pomembno: izogni se 3.3.0 težavi
 
       - name: Install tools
         shell: pwsh
         run: choco install -y ninja 7zip
 
-      - name: Setup vcpkg + OpenCV (with ffmpeg)
+      # Prenesi uradni prebuilt OpenCV 4.10 (SFX .exe) in ga razpakiraj
+      - name: Get prebuilt OpenCV 4.10
         shell: pwsh
         run: |
-          git clone https://github.com/microsoft/vcpkg $env:VCPKG_ROOT
-          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat"
-          & "$env:VCPKG_ROOT\vcpkg.exe" install "opencv[ffmpeg]:x64-windows"
+          $ov = '4.10.0'
+          $exe = Join-Path $env:RUNNER_TEMP "opencv-$ov-windows.exe"
+          Invoke-WebRequest "https://github.com/opencv/opencv/releases/download/$ov/opencv-$ov-windows.exe" -OutFile $exe
+          7z x $exe -oC:\ -y
+          dir C:\opencv\build
 
       - name: Configure (CMake + Ninja)
         shell: pwsh
         run: |
+          $ocvRoot = 'C:\opencv\build'
+          $binVC17 = 'C:\opencv\build\x64\vc17\bin'
+          $binVC16 = 'C:\opencv\build\x64\vc16\bin'
+          if (Test-Path $binVC17) { $env:OCV_BIN = $binVC17 } else { $env:OCV_BIN = $binVC16 }
           cmake -S . -B build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            -DOpenCV_DIR="$ocvRoot" `
             -DCMAKE_PREFIX_PATH="$env:Qt6_DIR"
 
       - name: Build
@@ -61,22 +62,22 @@ jobs:
           "EXE=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "Found $($exe.FullName)"
 
-      - name: Deploy Qt runtimes (windeployqt)
+      - name: Bundle Qt (windeployqt)
         shell: pwsh
         run: |
           & "$env:Qt6_DIR\bin\windeployqt.exe" --release --compiler-runtime "$env:EXE"
 
-      - name: Copy OpenCV DLLs
+      - name: Copy OpenCV DLLs (prebuilt)
         shell: pwsh
         run: |
           $bindir = Split-Path $env:EXE
-          Copy-Item "$env:VCPKG_ROOT\installed\x64-windows\bin\*.dll" $bindir -Force
+          Copy-Item "$env:OCV_BIN\*.dll" $bindir -Force
 
       - name: Package ZIP
         shell: pwsh
         run: |
           $bindir = Split-Path $env:EXE
-          $zip = Join-Path $env:RUNNER_TEMP "LiveVideoMagnification-win64-${{ matrix.qtver }}.zip"
+          $zip = Join-Path $env:RUNNER_TEMP "LiveVideoMagnification-win64.zip"
           Push-Location $bindir
           7z a $zip *
           Pop-Location
@@ -85,5 +86,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LiveVideoMagnification-win64-${{ matrix.qtver }}
+          name: LiveVideoMagnification-win64
           path: ${{ env.ZIP }}
