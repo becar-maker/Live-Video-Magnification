@@ -1,1 +1,83 @@
+name: Windows Build (Qt6 + OpenCV via vcpkg)
+
+on:
+  workflow_dispatch: {}   # ročni zagon
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      VCPKG_ROOT: C:\vcpkg
+      VCPKG_DEFAULT_TRIPLET: x64-windows
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt (MSVC 2022)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.7.2'
+          arch: 'win64_msvc2022_64'
+          cache: true
+
+      - name: Install tools
+        shell: pwsh
+        run: choco install -y ninja 7zip
+
+      - name: Setup vcpkg + OpenCV (with ffmpeg)
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg $env:VCPKG_ROOT
+          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat"
+          & "$env:VCPKG_ROOT\vcpkg.exe" install "opencv[ffmpeg]:x64-windows"
+
+      - name: Configure (CMake + Ninja)
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR"
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release --parallel
+
+      - name: Locate EXE
+        id: findexe
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path build -Recurse -Filter *.exe |
+            Where-Object { $_.Name -notmatch 'cmake|ctest' } |
+            Select-Object -First 1
+          if (-not $exe) { throw "EXE not found" }
+          "EXE=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Found $($exe.FullName)"
+
+      - name: Deploy Qt runtimes (windeployqt)
+        shell: pwsh
+        run: |
+          & "$env:Qt6_DIR\bin\windeployqt.exe" --release --compiler-runtime "$env:EXE"
+
+      - name: Copy OpenCV DLLs
+        shell: pwsh
+        run: |
+          $bindir = Split-Path $env:EXE
+          Copy-Item "$env:VCPKG_ROOT\installed\x64-windows\bin\*.dll" $bindir -Force
+
+      - name: Package ZIP
+        shell: pwsh
+        run: |
+          $bindir = Split-Path $env:EXE
+          $zip = Join-Path $env:RUNNER_TEMP "LiveVideoMagnification-win64.zip"
+          Push-Location $bindir
+          7z a $zip *
+          Pop-Location
+          "ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LiveVideoMagnification-win64
+          path: ${{ env.ZIP }}
 
