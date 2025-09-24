@@ -1,4 +1,4 @@
-name: Windows Build (MSYS2 MinGW, Qt6 + OpenCV prebuilt)
+name: Windows Build (MSYS2 MinGW, Qt6 + OpenCV)
 
 on:
   workflow_dispatch: {}
@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # MSYS2 z UCRT64 (priporočeno); namestimo Qt6 + OpenCV + orodja
+      # MSYS2 (UCRT64) + Qt6 + OpenCV + orodja
       - name: Set up MSYS2
         uses: msys2/setup-msys2@v2
         with:
@@ -24,45 +24,61 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-base
             mingw-w64-ucrt-x86_64-qt6-tools
             mingw-w64-ucrt-x86_64-opencv
+            mingw-w64-ucrt-x86_64-ffmpeg
             zip
 
+      # Konfiguracija (CMake najde Qt v /ucrt64 in OpenCV v cmake config poti)
       - name: Configure (CMake + Ninja)
         shell: msys2 {0}
         run: |
           cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH=/ucrt64 \
+            -DOpenCV_DIR=/ucrt64/lib/cmake/opencv4
 
       - name: Build
         shell: msys2 {0}
         run: cmake --build build --config Release --parallel
 
+      # Poiščemo .exe kjerkoli pod build/
       - name: Find EXE
         id: findexe
-        shell: bash
+        shell: msys2 {0}
         run: |
-          EXE=$(ls -1 build/**/*.exe build/*.exe 2>/dev/null | head -n1)
-          if [ -z "$EXE" ]; then echo "EXE not found"; exit 1; fi
+          set -e
+          echo "Searching for built executables..."
+          find build -maxdepth 4 -type f -name "*.exe" -print
+          EXE=$(find build -type f -name "*.exe" | head -n1)
+          if [ -z "$EXE" ]; then echo "No .exe produced"; exit 1; fi
           echo "EXE=$EXE" >> $GITHUB_ENV
           echo "Found $EXE"
 
-      # Zberemo Qt/MinGW runtime (preko windeployqt v MSYS2)
+      # Zberemo Qt runtime (windeployqt iz MSYS2; potrebuje Windows pot do EXE)
       - name: Bundle Qt runtimes
         shell: msys2 {0}
         run: |
           EXE_WIN=$(cygpath -w "$EXE")
           windeployqt-qt6 --release "$EXE_WIN"
 
-      # Kopiramo OpenCV in MinGW DLL-je (MSYS2 paketi)
+      # Skopiramo OpenCV + FFmpeg + MinGW DLL-je, da bo paket "portable"
       - name: Copy OpenCV + MinGW runtimes
         shell: msys2 {0}
         run: |
           BIN_DIR=$(dirname "$EXE")
+          # OpenCV
           cp /ucrt64/bin/libopencv*.dll "$BIN_DIR"/
-          # MinGW runtime (libstdc++/libgcc/winpthread) priloži windeployqt, po potrebi dodamo:
+          # FFmpeg (video I/O preko OpenCV)
+          cp /ucrt64/bin/avcodec-*.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/avformat-*.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/avutil-*.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/swscale-*.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/swresample-*.dll "$BIN_DIR"/ || true
+          # MinGW runtime
           cp /ucrt64/bin/libstdc++-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libgcc_s_*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libwinpthread-*.dll "$BIN_DIR"/ || true
 
+      # Spakiramo v ZIP in pripravimo Windows pot za upload-artifact
       - name: Package ZIP
         shell: msys2 {0}
         run: |
@@ -70,10 +86,12 @@ jobs:
           cd "$BIN_DIR"/..
           ZIP="$RUNNER_TEMP/LiveVideoMagnification-msys2.zip"
           zip -r "$ZIP" "$(basename "$BIN_DIR")"
-          echo "ZIP=$ZIP" >> $GITHUB_ENV
+          ZIP_WIN=$(cygpath -w "$ZIP")
+          echo "ZIP_WIN=$ZIP_WIN" >> $GITHUB_ENV
+          echo "Packaged $ZIP_WIN"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: LiveVideoMagnification-msys2
-          path: ${{ env.ZIP }}
+          path: ${{ env.ZIP_WIN }}
