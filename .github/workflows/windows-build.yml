@@ -1,12 +1,11 @@
 name: Windows Build (Qt6 + OpenCV via vcpkg)
 
 on:
-  workflow_dispatch: {}   # ročni zagon samo po tvojem kliku
+  workflow_dispatch: {}   # ročni zagon
 
 jobs:
   build:
     runs-on: windows-latest
-
     env:
       VCPKG_ROOT: C:\vcpkg
       VCPKG_DEFAULT_TRIPLET: x64-windows
@@ -14,19 +13,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ✅ Enostavna in zanesljiva namestitev Qt (brez ročnega aqt)
+      # ✅ Qt prek uradnega actiona (BREZ aqt ukazov!)
       - name: Install Qt (MSVC 2022)
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.7.2'
           arch: 'win64_msvc2022_64'
           cache: true
-          # NE navajaj "modules:" -> qtbase pride privzeto
 
       - name: Install tools
         shell: pwsh
-        run: |
-          choco install -y ninja 7zip
+        run: choco install -y ninja 7zip
 
       - name: Setup vcpkg + OpenCV (with ffmpeg)
         shell: pwsh
