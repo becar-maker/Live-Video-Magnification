@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # MSYS2 (UCRT64) + Qt6 + OpenCV + orodja
+      # MSYS2 (UCRT64) + Qt6 + OpenCV + vse runtime odvisnosti, ki jih potrebujemo
       - name: Set up MSYS2
         uses: msys2/setup-msys2@v2
         with:
@@ -25,9 +25,17 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-tools
             mingw-w64-ucrt-x86_64-opencv
             mingw-w64-ucrt-x86_64-ffmpeg
+            # dodatne DLL odvisnosti:
+            mingw-w64-ucrt-x86_64-tbb
+            mingw-w64-ucrt-x86_64-zlib
+            mingw-w64-ucrt-x86_64-freetype
+            mingw-w64-ucrt-x86_64-harfbuzz
+            mingw-w64-ucrt-x86_64-brotli
+            mingw-w64-ucrt-x86_64-libpng
+            mingw-w64-ucrt-x86_64-bzip2
+            mingw-w64-ucrt-x86_64-zstd
             zip
 
-      # Konfiguracija: Qt je v /ucrt64, OpenCV config v /ucrt64/lib/cmake/opencv4
       - name: Configure (CMake + Ninja)
         shell: msys2 {0}
         run: |
@@ -40,60 +48,56 @@ jobs:
         shell: msys2 {0}
         run: cmake --build build --config Release --parallel
 
-      # Zanesljivo poiščemo PRAVI .exe (ne CMake test a.exe)
       - name: Find EXE
         id: findexe
         shell: msys2 {0}
         run: |
           set -e
-          echo "---- Kandidati .exe v build/ ----"
+          echo "---- candidates ----"
           find build -type f -name "*.exe" -not -path "*/CMakeFiles/*" -not -path "*/Testing/*" -print || true
-
-          # 1) poskusi ujeti pravi naziv (najpogosteje LiveVideoMagnification.exe)
-          EXE=$(find build -type f -name "*Live*Video*Magnification*.exe" -not -path "*/CMakeFiles/*" -print | head -n1)
-
-          # 2) če ga ni, vzemi NAJVEČJI .exe (izloči a.exe ipd.)
+          EXE=$(find build -type f -name "*Live*Video*Magnification*.exe" -not -path "*/CMakeFiles/*" | head -n1)
           if [ -z "$EXE" ]; then
             CANDS=$(find build -type f -name "*.exe" -not -path "*/CMakeFiles/*" -not -path "*/Testing/*" -not -name "a.exe")
             if [ -n "$CANDS" ]; then
               EXE=$(for f in $CANDS; do echo $(stat -c%s "$f")" "$f; done | sort -nr | head -n1 | awk '{print $2}')
             fi
           fi
-
-          if [ -z "$EXE" ]; then
-            echo "No .exe produced"; exit 1
-          fi
-
+          if [ -z "$EXE" ]; then echo "No .exe produced"; exit 1; fi
           echo "EXE=$EXE" >> $GITHUB_ENV
           echo "Found EXE: $EXE"
 
-      # Zberemo Qt runtime za NAŠ EXE
       - name: Bundle Qt runtimes
         shell: msys2 {0}
         run: |
           EXE_WIN=$(cygpath -w "$EXE")
-          echo "windeployqt-qt6 -> $EXE_WIN"
           windeployqt-qt6 --release "$EXE_WIN"
 
-      # Skopiramo OpenCV + FFmpeg + MinGW DLL-je, da bo paket "portable"
+      # ➜ tu dodamo še manjkajoče DLL-je (tbb, zlib, freetype, harfbuzz, …)
       - name: Copy OpenCV + MinGW runtimes
         shell: msys2 {0}
         run: |
           BIN_DIR=$(dirname "$EXE")
-          # OpenCV
+          # OpenCV + FFmpeg
           cp /ucrt64/bin/libopencv*.dll "$BIN_DIR"/
-          # FFmpeg (za video I/O)
           cp /ucrt64/bin/avcodec-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/avformat-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/avutil-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/swscale-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/swresample-*.dll "$BIN_DIR"/ || true
+          # Dodatne skupne odvisnosti:
+          cp /ucrt64/bin/libtbb*.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/zlib1.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libfreetype-6.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libharfbuzz-0.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libbrotli*.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libpng16-16.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libbz2-1.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libzstd*.dll "$BIN_DIR"/ || true
           # MinGW runtime
           cp /ucrt64/bin/libstdc++-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libgcc_s_*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libwinpthread-*.dll "$BIN_DIR"/ || true
 
-      # Spakiramo v ZIP (Windows pot za upload)
       - name: Package ZIP
         shell: msys2 {0}
         run: |
