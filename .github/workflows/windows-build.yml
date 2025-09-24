@@ -1,4 +1,4 @@
-name: Windows Build (MSYS2 MinGW, Qt6 + OpenCV)
+name: Windows Build (MSYS2 MinGW, Qt6 + OpenCV, full runtimes)
 
 on:
   workflow_dispatch: {}
@@ -32,6 +32,13 @@ jobs:
             mingw-w64-ucrt-x86_64-libpng
             mingw-w64-ucrt-x86_64-bzip2
             mingw-w64-ucrt-x86_64-zstd
+            # GLib + GStreamer za OpenCV/QtMultimedia
+            mingw-w64-ucrt-x86_64-glib2
+            mingw-w64-ucrt-x86_64-gstreamer
+            mingw-w64-ucrt-x86_64-gst-plugins-base
+            mingw-w64-ucrt-x86_64-gst-plugins-good
+            mingw-w64-ucrt-x86_64-libiconv
+            mingw-w64-ucrt-x86_64-gettext
             zip
 
       - name: Configure (CMake + Ninja)
@@ -51,34 +58,29 @@ jobs:
         shell: msys2 {0}
         run: |
           set -e
-          echo "---- candidates ----"
-          find build -type f -name "*.exe" -not -path "*/CMakeFiles/*" -not -path "*/Testing/*" -print || true
           EXE=$(find build -type f -name "*Live*Video*Magnification*.exe" -not -path "*/CMakeFiles/*" | head -n1)
           if [ -z "$EXE" ]; then
-            CANDS=$(find build -type f -name "*.exe" -not -path "*/CMakeFiles/*" -not -path "*/Testing/*" -not -name "a.exe")
-            if [ -n "$CANDS" ]; then
-              EXE=$(for f in $CANDS; do echo $(stat -c%s "$f")" "$f; done | sort -nr | head -n1 | awk '{print $2}')
-            fi
+            CANDS=$(find build -type f -name "*.exe" -not -path "*/CMakeFiles/*" -not -name "a.exe")
+            [ -n "$CANDS" ] && EXE=$(for f in $CANDS; do echo $(stat -c%s "$f")" "$f; done | sort -nr | head -n1 | awk '{print $2}')
           fi
-          if [ -z "$EXE" ]; then echo "No .exe produced"; exit 1; fi
+          [ -z "$EXE" ] && { echo "No .exe produced"; exit 1; }
           echo "EXE=$EXE" >> $GITHUB_ENV
           echo "Found EXE: $EXE"
 
-      - name: Bundle Qt runtimes
+      - name: Bundle Qt runtimes (windeployqt)
         shell: msys2 {0}
         run: |
           EXE_WIN=$(cygpath -w "$EXE")
-          echo "windeployqt-qt6 -> $EXE_WIN"
           windeployqt-qt6 --release "$EXE_WIN"
 
-      # 🔧 odstranimo Qt Multimedia vtičnike, da se ne zahtevajo glib/gstreamer DLL-ji
-      - name: Remove Qt Multimedia plugins (avoid GStreamer deps)
-        shell: msys2 {0}
-        run: |
-          BIN_DIR=$(dirname "$EXE")
-          rm -rf "$BIN_DIR/plugins/mediaservice" "$BIN_DIR/plugins/multimedia" || true
+      # (opcijsko) lahko odstranimo Qt Multimedia vtičnike, če jih ne želiš
+      # - name: Remove Qt Multimedia plugins
+      #   shell: msys2 {0}
+      #   run: |
+      #     BIN_DIR=$(dirname "$EXE")
+      #     rm -rf "$BIN_DIR/plugins/mediaservice" || true
 
-      - name: Copy OpenCV + MinGW runtimes
+      - name: Copy OpenCV/FFmpeg + GLib/GStreamer + MinGW runtimes
         shell: msys2 {0}
         run: |
           BIN_DIR=$(dirname "$EXE")
@@ -89,7 +91,7 @@ jobs:
           cp /ucrt64/bin/avutil-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/swscale-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/swresample-*.dll "$BIN_DIR"/ || true
-          # dodatne odvisnosti
+          # dodatne odvisnosti (prej manjkajoče)
           cp /ucrt64/bin/libtbb*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/zlib1.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libfreetype-6.dll "$BIN_DIR"/ || true
@@ -98,6 +100,19 @@ jobs:
           cp /ucrt64/bin/libpng16-16.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libbz2-1.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libzstd*.dll "$BIN_DIR"/ || true
+          # GLib/GStreamer jedro
+          cp /ucrt64/bin/libglib-2.0-0.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libgobject-2.0-0.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libgio-2.0-0.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libintl-8.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libiconv-2.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libpcre2-8-0.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libffi-8.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libgstreamer-1.0-0.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libgstbase-1.0-0.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libgstapp-1.0-0.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libgstaudio-1.0-0.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libgstvideo-1.0-0.dll "$BIN_DIR"/ || true
           # MinGW runtime
           cp /ucrt64/bin/libstdc++-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libgcc_s_*.dll "$BIN_DIR"/ || true
@@ -112,7 +127,6 @@ jobs:
           zip -r "$ZIP" "$(basename "$BIN_DIR")"
           ZIP_WIN=$(cygpath -w "$ZIP")
           echo "ZIP_WIN=$ZIP_WIN" >> $GITHUB_ENV
-          echo "Packaged $ZIP_WIN"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
