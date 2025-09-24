@@ -1,4 +1,4 @@
-name: Windows Build (MSYS2 MinGW, Qt6 + OpenCV, full runtimes)
+name: Windows Build (MSYS2 MinGW, Qt6 + OpenCV, auto-bundle deps)
 
 on:
   workflow_dispatch: {}
@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up MSYS2
+      - name: Set up MSYS2 (UCRT64) + deps
         uses: msys2/setup-msys2@v2
         with:
           release: true
@@ -38,6 +38,11 @@ jobs:
             mingw-w64-ucrt-x86_64-gst-plugins-good
             mingw-w64-ucrt-x86_64-libiconv
             mingw-w64-ucrt-x86_64-gettext
+            mingw-w64-ucrt-x86_64-double-conversion
+            mingw-w64-ucrt-x86_64-libb2
+            mingw-w64-ucrt-x86_64-graphite2
+            mingw-w64-ucrt-x86_64-fribidi
+            mingw-w64-ucrt-x86_64-ntldd-git
             zip
 
       - name: Configure (CMake + Ninja)
@@ -60,26 +65,18 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           candidates=()
-
-          # 1) najprej poglej v build/bin
           if [ -d build/bin ]; then
             while IFS= read -r -d '' f; do candidates+=("$f"); done < <(find build/bin -maxdepth 1 -type f -name "*.exe" -print0)
           fi
-          # 2) sicer preišči build/, izloči CMakeFiles in a.exe
           if [ ${#candidates[@]} -eq 0 ]; then
-            while IFS= read -r -d '' f; do candidates+=("$f"); done < <(find build -type f -name "*.exe" ! -path "*/CMakeFiles/*" ! -path "*/Testing/*" ! -name "a.exe" -print0)
+            while IFS= read -r -d '' f; do candidates+=("$f"); done < <(find build -type f -name "*.exe" ! -path "*/CMakeFiles/*" ! -name "a.exe" -print0)
           fi
-          if [ ${#candidates[@]} -eq 0 ]; then
-            echo "No .exe produced"; exit 1
-          fi
-
-          # vzemi največji .exe (običajno je pravi)
+          [ ${#candidates[@]} -eq 0 ] && { echo "No .exe produced"; exit 1; }
           max=0; exe=""
           for f in "${candidates[@]}"; do
             size=$(stat -c%s "$f")
             if (( size > max )); then max=$size; exe="$f"; fi
           done
-
           echo "EXE=$exe" >> $GITHUB_ENV
           echo "Found EXE: $exe"
 
@@ -89,43 +86,39 @@ jobs:
           EXE_WIN=$(cygpath -w "$EXE")
           windeployqt-qt6 --release "$EXE_WIN"
 
-      - name: Copy OpenCV/FFmpeg + GLib/GStreamer + MinGW runtimes
+      # Kopiraj znane knjižnice (OpenCV/FFmpeg/MinGW) – hiter first-pass
+      - name: Copy core DLLs
         shell: msys2 {0}
         run: |
           BIN_DIR=$(dirname "$EXE")
-          # OpenCV + FFmpeg
           cp /ucrt64/bin/libopencv*.dll "$BIN_DIR"/
           cp /ucrt64/bin/avcodec-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/avformat-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/avutil-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/swscale-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/swresample-*.dll "$BIN_DIR"/ || true
-          # extra odvisnosti
-          cp /ucrt64/bin/libtbb*.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/zlib1.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libfreetype-6.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libharfbuzz-0.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libbrotli*.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libpng16-16.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libbz2-1.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libzstd*.dll "$BIN_DIR"/ || true
-          # GLib/GStreamer
-          cp /ucrt64/bin/libglib-2.0-0.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libgobject-2.0-0.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libgio-2.0-0.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libintl-8.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libiconv-2.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libpcre2-8-0.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libffi-8.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libgstreamer-1.0-0.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libgstbase-1.0-0.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libgstapp-1.0-0.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libgstaudio-1.0-0.dll "$BIN_DIR"/ || true
-          cp /ucrt64/bin/libgstvideo-1.0-0.dll "$BIN_DIR"/ || true
-          # MinGW runtime
           cp /ucrt64/bin/libstdc++-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libgcc_s_*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libwinpthread-*.dll "$BIN_DIR"/ || true
+
+      # 🔎 Samodejno poberi VSE preostale odvisnosti iz /ucrt64/bin z ntldd (EXE + vse DLL + plugini)
+      - name: Auto-bundle remaining deps (ntldd sweep)
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          BIN_DIR=$(dirname "$EXE")
+          list_deps() { ntldd -R "$1" | awk '/=>/ && $3 ~ /^\/ucrt64\/bin\// {print $3}'; }
+          tmp=$(mktemp)
+          # EXE + DLL v BIN_DIR
+          find "$BIN_DIR" -maxdepth 1 -type f \( -name "*.exe" -o -name "*.dll" \) -print0 | \
+            xargs -0 -I{} bash -lc 'list_deps "{}"' >> "$tmp" || true
+          # Qt plugini
+          if [ -d "$BIN_DIR/plugins" ]; then
+            find "$BIN_DIR/plugins" -type f -name "*.dll" -print0 | \
+              xargs -0 -I{} bash -lc 'list_deps "{}"' >> "$tmp" || true
+          fi
+          sort -u "$tmp" | while read -r d; do cp -n "$d" "$BIN_DIR"/ || true; done
+          rm -f "$tmp"
 
       - name: Package ZIP
         shell: msys2 {0}
