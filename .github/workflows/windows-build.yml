@@ -1,4 +1,4 @@
-name: Windows Build (MSYS2 MinGW, Qt6 + OpenCV, auto-bundle deps)
+name: Windows Build (MSYS2 MinGW, Qt6 + OpenCV, auto-bundle deps v2)
 
 on:
   workflow_dispatch: {}
@@ -65,18 +65,13 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           candidates=()
-          if [ -d build/bin ]; then
-            while IFS= read -r -d '' f; do candidates+=("$f"); done < <(find build/bin -maxdepth 1 -type f -name "*.exe" -print0)
-          fi
+          [ -d build/bin ] && while IFS= read -r -d '' f; do candidates+=("$f"); done < <(find build/bin -maxdepth 1 -type f -name "*.exe" -print0)
           if [ ${#candidates[@]} -eq 0 ]; then
             while IFS= read -r -d '' f; do candidates+=("$f"); done < <(find build -type f -name "*.exe" ! -path "*/CMakeFiles/*" ! -name "a.exe" -print0)
           fi
           [ ${#candidates[@]} -eq 0 ] && { echo "No .exe produced"; exit 1; }
           max=0; exe=""
-          for f in "${candidates[@]}"; do
-            size=$(stat -c%s "$f")
-            if (( size > max )); then max=$size; exe="$f"; fi
-          done
+          for f in "${candidates[@]}"; do s=$(stat -c%s "$f"); (( s>max )) && { max=$s; exe="$f"; }; done
           echo "EXE=$exe" >> $GITHUB_ENV
           echo "Found EXE: $exe"
 
@@ -86,7 +81,18 @@ jobs:
           EXE_WIN=$(cygpath -w "$EXE")
           windeployqt-qt6 --release "$EXE_WIN"
 
-      # Kopiraj znane knjižnice (OpenCV/FFmpeg/MinGW) – hiter first-pass
+      # 1) ročno prilepi kritične DLL-je (običajna imena in alternative)
+      - name: Force-add critical DLLs
+        shell: msys2 {0}
+        run: |
+          BIN_DIR=$(dirname "$EXE")
+          # tbb: nekateri moduli pričakujejo libtbb12.dll, paket včasih namesti tbb12.dll
+          for n in libtbb12.dll tbb12.dll; do [ -f /ucrt64/bin/$n ] && cp /ucrt64/bin/$n "$BIN_DIR"/; done
+          cp /ucrt64/bin/zlib1.dll "$BIN_DIR"/  || true
+          cp /ucrt64/bin/libfreetype-6.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libharfbuzz-0.dll "$BIN_DIR"/ || true
+
+      # 2) “core” kopije (OpenCV/FFmpeg/MinGW)
       - name: Copy core DLLs
         shell: msys2 {0}
         run: |
@@ -101,7 +107,7 @@ jobs:
           cp /ucrt64/bin/libgcc_s_*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libwinpthread-*.dll "$BIN_DIR"/ || true
 
-      # 🔎 Samodejno poberi VSE preostale odvisnosti iz /ucrt64/bin z ntldd (EXE + vse DLL + plugini)
+      # 3) ntldd “sweep” – EXE + vsi DLL + Qt plugini → skopiraj VSE iz /ucrt64/bin
       - name: Auto-bundle remaining deps (ntldd sweep)
         shell: msys2 {0}
         run: |
@@ -109,14 +115,8 @@ jobs:
           BIN_DIR=$(dirname "$EXE")
           list_deps() { ntldd -R "$1" | awk '/=>/ && $3 ~ /^\/ucrt64\/bin\// {print $3}'; }
           tmp=$(mktemp)
-          # EXE + DLL v BIN_DIR
-          find "$BIN_DIR" -maxdepth 1 -type f \( -name "*.exe" -o -name "*.dll" \) -print0 | \
-            xargs -0 -I{} bash -lc 'list_deps "{}"' >> "$tmp" || true
-          # Qt plugini
-          if [ -d "$BIN_DIR/plugins" ]; then
-            find "$BIN_DIR/plugins" -type f -name "*.dll" -print0 | \
-              xargs -0 -I{} bash -lc 'list_deps "{}"' >> "$tmp" || true
-          fi
+          find "$BIN_DIR" -maxdepth 1 -type f \( -name "*.exe" -o -name "*.dll" \) -print0 | xargs -0 -I{} bash -lc 'list_deps "{}"' >> "$tmp" || true
+          [ -d "$BIN_DIR/plugins" ] && find "$BIN_DIR/plugins" -type f -name "*.dll" -print0 | xargs -0 -I{} bash -lc 'list_deps "{}"' >> "$tmp" || true
           sort -u "$tmp" | while read -r d; do cp -n "$d" "$BIN_DIR"/ || true; done
           rm -f "$tmp"
 
@@ -127,8 +127,7 @@ jobs:
           cd "$BIN_DIR"/..
           ZIP="$RUNNER_TEMP/LiveVideoMagnification-msys2.zip"
           zip -r "$ZIP" "$(basename "$BIN_DIR")"
-          ZIP_WIN=$(cygpath -w "$ZIP")
-          echo "ZIP_WIN=$ZIP_WIN" >> $GITHUB_ENV
+          echo "ZIP_WIN=$(cygpath -w "$ZIP")" >> $GITHUB_ENV
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
