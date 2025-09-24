@@ -27,7 +27,7 @@ jobs:
             mingw-w64-ucrt-x86_64-ffmpeg
             zip
 
-      # Konfiguracija (CMake najde Qt v /ucrt64 in OpenCV v cmake config poti)
+      # Konfiguracija: Qt je v /ucrt64, OpenCV config v /ucrt64/lib/cmake/opencv4
       - name: Configure (CMake + Ninja)
         shell: msys2 {0}
         run: |
@@ -40,24 +40,39 @@ jobs:
         shell: msys2 {0}
         run: cmake --build build --config Release --parallel
 
-      # Poiščemo .exe kjerkoli pod build/
+      # Zanesljivo poiščemo PRAVI .exe (ne CMake test a.exe)
       - name: Find EXE
         id: findexe
         shell: msys2 {0}
         run: |
           set -e
-          echo "Searching for built executables..."
-          find build -maxdepth 4 -type f -name "*.exe" -print
-          EXE=$(find build -type f -name "*.exe" | head -n1)
-          if [ -z "$EXE" ]; then echo "No .exe produced"; exit 1; fi
-          echo "EXE=$EXE" >> $GITHUB_ENV
-          echo "Found $EXE"
+          echo "---- Kandidati .exe v build/ ----"
+          find build -type f -name "*.exe" -not -path "*/CMakeFiles/*" -not -path "*/Testing/*" -print || true
 
-      # Zberemo Qt runtime (windeployqt iz MSYS2; potrebuje Windows pot do EXE)
+          # 1) poskusi ujeti pravi naziv (najpogosteje LiveVideoMagnification.exe)
+          EXE=$(find build -type f -name "*Live*Video*Magnification*.exe" -not -path "*/CMakeFiles/*" -print | head -n1)
+
+          # 2) če ga ni, vzemi NAJVEČJI .exe (izloči a.exe ipd.)
+          if [ -z "$EXE" ]; then
+            CANDS=$(find build -type f -name "*.exe" -not -path "*/CMakeFiles/*" -not -path "*/Testing/*" -not -name "a.exe")
+            if [ -n "$CANDS" ]; then
+              EXE=$(for f in $CANDS; do echo $(stat -c%s "$f")" "$f; done | sort -nr | head -n1 | awk '{print $2}')
+            fi
+          fi
+
+          if [ -z "$EXE" ]; then
+            echo "No .exe produced"; exit 1
+          fi
+
+          echo "EXE=$EXE" >> $GITHUB_ENV
+          echo "Found EXE: $EXE"
+
+      # Zberemo Qt runtime za NAŠ EXE
       - name: Bundle Qt runtimes
         shell: msys2 {0}
         run: |
           EXE_WIN=$(cygpath -w "$EXE")
+          echo "windeployqt-qt6 -> $EXE_WIN"
           windeployqt-qt6 --release "$EXE_WIN"
 
       # Skopiramo OpenCV + FFmpeg + MinGW DLL-je, da bo paket "portable"
@@ -67,7 +82,7 @@ jobs:
           BIN_DIR=$(dirname "$EXE")
           # OpenCV
           cp /ucrt64/bin/libopencv*.dll "$BIN_DIR"/
-          # FFmpeg (video I/O preko OpenCV)
+          # FFmpeg (za video I/O)
           cp /ucrt64/bin/avcodec-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/avformat-*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/avutil-*.dll "$BIN_DIR"/ || true
@@ -78,7 +93,7 @@ jobs:
           cp /ucrt64/bin/libgcc_s_*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libwinpthread-*.dll "$BIN_DIR"/ || true
 
-      # Spakiramo v ZIP in pripravimo Windows pot za upload-artifact
+      # Spakiramo v ZIP (Windows pot za upload)
       - name: Package ZIP
         shell: msys2 {0}
         run: |
