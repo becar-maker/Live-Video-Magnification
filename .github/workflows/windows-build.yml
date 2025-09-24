@@ -6,6 +6,10 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        qtver: [ '6.8.1', '6.6.3' ]   # 2 poizkusa: najprej 6.8.1, fallback 6.6.3
     env:
       VCPKG_ROOT: C:\vcpkg
       VCPKG_DEFAULT_TRIPLET: x64-windows
@@ -13,15 +17,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Qt 6.6.3 (LTS) + MSVC 2022; action interno kliče aqt
-      - name: Install Qt (MSVC 2022)
+      # ✅ Qt (akcija interno kliče aqt). Dodamo mirror, da se izognemo 404 qt_base.
+      - name: Install Qt (MSVC 2022) ${{ matrix.qtver }}
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.6.3'
-          arch: 'win64_msvc2022_64'
+          version: ${{ matrix.qtver }}
+          arch: win64_msvc2022_64
           cache: true
-          # po potrebi lahko dodamo mirror:
-          # mirror: 'https://download.qt.io'  # ali npr. 'https://mirrors.ocf.berkeley.edu/qt/official_releases/'
+          mirror: https://download.qt.io
+          # modules: 'qtimageformats'   # po potrebi lahko odkomentiraš
 
       - name: Install tools
         shell: pwsh
@@ -72,7 +76,7 @@ jobs:
         shell: pwsh
         run: |
           $bindir = Split-Path $env:EXE
-          $zip = Join-Path $env:RUNNER_TEMP "LiveVideoMagnification-win64.zip"
+          $zip = Join-Path $env:RUNNER_TEMP "LiveVideoMagnification-win64-${{ matrix.qtver }}.zip"
           Push-Location $bindir
           7z a $zip *
           Pop-Location
@@ -81,5 +85,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LiveVideoMagnification-win64
+          name: LiveVideoMagnification-win64-${{ matrix.qtver }}
           path: ${{ env.ZIP }}
