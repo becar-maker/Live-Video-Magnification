@@ -1,4 +1,4 @@
-name: Windows Build (MSYS2 MinGW, Qt6 + OpenCV, final no-GStreamer)
+name: Windows Build (MSYS2 MinGW, Qt6 + OpenCV, FULL runtimes)
 
 on:
   workflow_dispatch: {}
@@ -36,6 +36,12 @@ jobs:
             mingw-w64-ucrt-x86_64-libb2
             mingw-w64-ucrt-x86_64-graphite2
             mingw-w64-ucrt-x86_64-fribidi
+            mingw-w64-ucrt-x86_64-glib2
+            mingw-w64-ucrt-x86_64-gstreamer
+            mingw-w64-ucrt-x86_64-gst-plugins-base
+            mingw-w64-ucrt-x86_64-gst-plugins-good
+            mingw-w64-ucrt-x86_64-libiconv
+            mingw-w64-ucrt-x86_64-gettext
             mingw-w64-ucrt-x86_64-ntldd-git
             zip
 
@@ -74,32 +80,23 @@ jobs:
           EXE_WIN=$(cygpath -w "$EXE")
           windeployqt-qt6 --release "$EXE_WIN"
 
-      # odstrani Qt Multimedia (ne želimo GLib/GStreamer)
-      - name: Strip Qt Multimedia
-        shell: msys2 {0}
-        run: |
-          BIN_DIR=$(dirname "$EXE")
-          rm -rf "$BIN_DIR/plugins/mediaservice" "$BIN_DIR/plugins/multimedia" || true
-          rm -f  "$BIN_DIR"/Qt6Multimedia*.dll || true
-
-      # prisilno dodaj kritične DLL-je (+ duplicate za libtbb12.dll)
+      # Kritične knjižnice (tbb/zlib/freetype/harfbuzz) – 100% prisilno
       - name: Force-add critical DLLs
         shell: msys2 {0}
         run: |
-          set -e
           BIN_DIR=$(dirname "$EXE")
-          # TBB: če obstaja samo tbb12.dll, naredi tudi libtbb12.dll
           if [ -f /ucrt64/bin/libtbb12.dll ]; then
             cp /ucrt64/bin/libtbb12.dll "$BIN_DIR"/
           elif [ -f /ucrt64/bin/tbb12.dll ]; then
             cp /ucrt64/bin/tbb12.dll "$BIN_DIR"/
             cp -f "$BIN_DIR/tbb12.dll" "$BIN_DIR/libtbb12.dll"
           fi
-          cp /ucrt64/bin/zlib1.dll "$BIN_DIR"/          || true
-          cp /ucrt64/bin/libfreetype-6.dll "$BIN_DIR"/  || true
-          cp /ucrt64/bin/libharfbuzz-0.dll "$BIN_DIR"/  || true
+          cp /ucrt64/bin/zlib1.dll "$BIN_DIR"/         || true
+          cp /ucrt64/bin/libfreetype-6.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libharfbuzz-0.dll "$BIN_DIR"/ || true
 
-      - name: Copy core DLLs (OpenCV/FFmpeg/MinGW)
+      # OpenCV/FFmpeg/MinGW
+      - name: Copy core DLLs
         shell: msys2 {0}
         run: |
           BIN_DIR=$(dirname "$EXE")
@@ -113,16 +110,31 @@ jobs:
           cp /ucrt64/bin/libgcc_s_*.dll "$BIN_DIR"/ || true
           cp /ucrt64/bin/libwinpthread-*.dll "$BIN_DIR"/ || true
 
-      # ntldd sweep: pobere vse odvisnosti, a filtrira GLib/GStreamer
-      - name: Auto-bundle remaining deps (ntldd, no-GLib)
+      # ✚ GLib + GStreamer (da nikoli več ne bo manjkalo libglib/libgobject/libgst*)
+      - name: Copy GLib & GStreamer runtimes (explicit)
+        shell: msys2 {0}
+        run: |
+          BIN_DIR=$(dirname "$EXE")
+          cp /ucrt64/bin/libglib-2.0-0.dll     "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libgobject-2.0-0.dll  "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libgio-2.0-0.dll      "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libintl-8.dll         "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libiconv-2.dll        "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libpcre2-8-0.dll      "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libffi-8.dll          "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libgstreamer-1.0-0.dll "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libgstbase-1.0-0.dll   "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libgstapp-1.0-0.dll    "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libgstaudio-1.0-0.dll  "$BIN_DIR"/ || true
+          cp /ucrt64/bin/libgstvideo-1.0-0.dll  "$BIN_DIR"/ || true
+
+      # Zadnji “ntldd sweep” – pobere še morebitne preostale odvisnosti
+      - name: Auto-bundle remaining deps (ntldd sweep)
         shell: msys2 {0}
         run: |
           set -euo pipefail
           BIN_DIR=$(dirname "$EXE")
-          list_deps() {
-            ntldd -R "$1" | awk '/=>/ && $3 ~ /^\/ucrt64\/bin\// {print $3}' |
-            grep -viE '/libg(streamer|st|object|io|glib)-|/gio-|/gmodule-|/gst'
-          }
+          list_deps() { ntldd -R "$1" | awk '/=>/ && $3 ~ /^\/ucrt64\/bin\// {print $3}'; }
           tmp=$(mktemp)
           find "$BIN_DIR" -maxdepth 1 -type f \( -name "*.exe" -o -name "*.dll" \) -print0 | \
             xargs -0 -I{} bash -lc 'list_deps "{}"' >> "$tmp" || true
